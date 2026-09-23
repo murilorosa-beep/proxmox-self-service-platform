@@ -4,6 +4,10 @@
 *.tfstate.*
 *.tfvars
 *.tfvars.json
+tfplan
+*.tfplan
+
+# Terraform crash logs
 crash.log
 crash.*.log
 
