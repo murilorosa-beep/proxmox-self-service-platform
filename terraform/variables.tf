@@ -107,3 +107,10 @@ variable "portal_vms" {
     error_message = "Disk size must be between 20 and 200 GB."
   }
 }
+
+
+variable "platform_ssh_public_key_path" {
+  description = "SSH public key used by the self-service platform for VM management."
+  type        = string
+  default     = "~/.ssh/self-service-managed.pub"
+}

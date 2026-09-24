@@ -69,6 +69,7 @@ resource "proxmox_virtual_environment_vm" "vm" {
       username = var.cloud_init_user
       keys = [
         trimspace(file(pathexpand(var.ssh_public_key_path))),
+        trimspace(file(pathexpand(var.platform_ssh_public_key_path))),
         trimspace(var.ansible_ssh_public_key)
       ]
     }
