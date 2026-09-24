@@ -1,17 +1,26 @@
 import json
 import os
+import socket
 import subprocess
+import tempfile
 import threading
+import time
 from pathlib import Path
 
 from dotenv import dotenv_values
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
 TERRAFORM_DIR = ROOT / "terraform"
 PORTAL_VARS = TERRAFORM_DIR / "portal.auto.tfvars.json"
 TERRAFORM_ENV = Path.home() / ".config/proxmox-self-service/terraform.env"
 TERRAFORM_PLAN = TERRAFORM_DIR / "portal.tfplan"
+
+ANSIBLE_PLAYBOOK = ROOT / "ansible" / "playbooks" / "base.yml"
+
+SSH_PRIVATE_KEY = Path.home() / ".ssh" / "self-service-managed"
+PLATFORM_KNOWN_HOSTS = Path.home() / ".ssh" / "self-service-known_hosts"
 
 terraform_lock = threading.Lock()
 
@@ -85,9 +94,123 @@ def allocate_resources(data):
     raise RuntimeError("No IP addresses available in portal pool")
 
 
+def wait_for_ssh(host, timeout=240):
+    deadline = time.time() + timeout
+
+    while time.time() < deadline:
+        try:
+            with socket.create_connection((host, 22), timeout=5):
+                return
+        except OSError:
+            time.sleep(5)
+
+    raise RuntimeError(
+        f"SSH did not become available on {host}:22 within {timeout} seconds"
+    )
+
+
+def register_host_key(host):
+    PLATFORM_KNOWN_HOSTS.parent.mkdir(
+        mode=0o700,
+        parents=True,
+        exist_ok=True,
+    )
+
+    if PLATFORM_KNOWN_HOSTS.exists():
+        subprocess.run(
+            [
+                "ssh-keygen",
+                "-f",
+                str(PLATFORM_KNOWN_HOSTS),
+                "-R",
+                host,
+            ],
+            text=True,
+            capture_output=True,
+        )
+
+    last_error = None
+
+    for _ in range(10):
+        scan = subprocess.run(
+            [
+                "ssh-keyscan",
+                "-T",
+                "5",
+                "-H",
+                "-t",
+                "ed25519",
+                host,
+            ],
+            text=True,
+            capture_output=True,
+        )
+
+        if scan.returncode == 0 and scan.stdout.strip():
+            with PLATFORM_KNOWN_HOSTS.open("a") as known_hosts:
+                known_hosts.write(scan.stdout)
+
+            PLATFORM_KNOWN_HOSTS.chmod(0o600)
+
+            fingerprint = subprocess.run(
+                ["ssh-keygen", "-lf", "-"],
+                input=scan.stdout,
+                text=True,
+                capture_output=True,
+            )
+
+            return fingerprint.stdout.strip()
+
+        last_error = scan.stderr
+        time.sleep(3)
+
+    raise RuntimeError(
+        f"Could not obtain SSH host key from {host}: {last_error}"
+    )
+
+
+def run_ansible(vm_name, host):
+    inventory = f"""[portal_vms]
+{vm_name} ansible_host={host}
+
+[portal_vms:vars]
+ansible_user=devops
+ansible_ssh_private_key_file={SSH_PRIVATE_KEY}
+ansible_python_interpreter=/usr/bin/python3
+ansible_ssh_common_args='-o UserKnownHostsFile={PLATFORM_KNOWN_HOSTS} -o StrictHostKeyChecking=yes'
+"""
+
+    inventory_path = None
+
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            suffix=".ini",
+            prefix="self-service-",
+            delete=False,
+        ) as temporary_inventory:
+            temporary_inventory.write(inventory)
+            inventory_path = temporary_inventory.name
+
+        return subprocess.run(
+            [
+                "ansible-playbook",
+                "-i",
+                inventory_path,
+                str(ANSIBLE_PLAYBOOK),
+            ],
+            cwd=ROOT,
+            text=True,
+            capture_output=True,
+        )
+
+    finally:
+        if inventory_path:
+            Path(inventory_path).unlink(missing_ok=True)
+
+
 def provision_vm(job_id, jobs):
     with terraform_lock:
-
         job = jobs[job_id]
         vm = job["vm"]
 
@@ -110,6 +233,7 @@ def provision_vm(job_id, jobs):
                 )
 
             vm_id, ipv4_address = allocate_resources(data)
+            host = ipv4_address.split("/")[0]
 
             data["portal_vms"][vm["name"]] = {
                 "vm_id": vm_id,
@@ -155,7 +279,27 @@ def provision_vm(job_id, jobs):
                     apply.stderr or apply.stdout
                 )
 
-            job["status"] = "provisioned"
+            job["status"] = "waiting_for_ssh"
+
+            wait_for_ssh(host)
+
+            job["status"] = "registering_host_key"
+
+            job["ssh_host_fingerprint"] = register_host_key(host)
+
+            job["status"] = "configuring"
+
+            ansible = run_ansible(
+                vm["name"],
+                host,
+            )
+
+            if ansible.returncode != 0:
+                raise RuntimeError(
+                    ansible.stderr or ansible.stdout
+                )
+
+            job["status"] = "ready"
 
             job["resource"] = {
                 "name": vm["name"],
@@ -163,12 +307,17 @@ def provision_vm(job_id, jobs):
                 "ip": ipv4_address,
             }
 
+            job["configuration"] = {
+                "ansible": "completed"
+            }
+
         except Exception as exc:
             job["status"] = "failed"
-            job["error"] = str(exc)[-3000:]
+            job["error"] = str(exc)[-5000:]
 
-            # Se Terraform ainda não começou o apply,
-            # podemos restaurar a configuração anterior.
+            # Restore desired configuration only if Terraform apply
+            # never started. Once infrastructure may have changed,
+            # automatic rollback would be unsafe.
             if not apply_started:
                 PORTAL_VARS.write_text(original_content)
 

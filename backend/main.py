@@ -9,7 +9,7 @@ from provisioner import provision_vm
 
 app = FastAPI(
     title="Proxmox Self-Service Platform",
-    version="0.4.0"
+    version="0.5.0"
 )
 
 
