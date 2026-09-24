@@ -2,110 +2,205 @@
 
 ## Overview
 
-The Proxmox Self-Service VM Platform is intended to provide a controlled, repeatable workflow for requesting and provisioning virtual machines in a Proxmox VE 9 laboratory environment. Users will interact with a self-service web portal, while a FastAPI backend will coordinate infrastructure provisioning and post-provisioning configuration.
+The Proxmox Self-Service VM Platform is an internal infrastructure control plane for a Proxmox VE 9 lab. It accepts validated VM requests through FastAPI and coordinates Terraform, Proxmox, Cloud-init, SSH, and Ansible until the guest reaches a configured `ready` state.
 
-The planned architecture is:
+The current control plane runs on `SELF-SERVICE-SRV`. Centralizing orchestration there removes the dependency on a personal workstation and keeps Terraform state, automation identities, and configuration tooling in one controlled environment.
+
+```mermaid
+flowchart LR
+    Client[User or API client] --> API[FastAPI]
+
+    subgraph ControlPlane[SELF-SERVICE-SRV control plane]
+        API --> Jobs[Job registry]
+        Jobs --> Worker[Serialized provisioning worker]
+        Worker --> TF[Terraform]
+        Worker --> SSH[SSH readiness and host-key validation]
+        Worker --> ANS[Ansible]
+    end
+
+    TF --> PVE[Proxmox VE 9 API]
+    PVE --> Template[Ubuntu 24.04 cloud template]
+    Template --> VM[Virtual machine]
+    TF --> CI[Cloud-init configuration]
+    CI --> VM
+    VM --> SSH
+    SSH --> ANS
+    ANS --> Ready[READY]
+```
+
+## Control Plane
+
+`SELF-SERVICE-SRV` owns the automation runtime:
+
+- FastAPI receives and validates requests.
+- The provisioning worker allocates resources and coordinates tools.
+- Terraform manages infrastructure and its local state.
+- Ansible applies the guest operating-system baseline.
+- Dedicated SSH keys and a separate `known_hosts` file support secure guest access.
+
+The API currently uses in-memory job storage and FastAPI background tasks. A process-wide lock allows only one Terraform operation at a time. This is appropriate for the current single-process lab deployment, but a multi-instance service will require a durable queue, persistent job database, and distributed locking.
+
+## Provisioning Pipeline
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant API as FastAPI
+    participant W as Provisioning worker
+    participant T as Terraform
+    participant P as Proxmox VE
+    participant V as Ubuntu VM
+    participant A as Ansible
+
+    User->>API: POST /api/vms
+    API-->>User: 202 Accepted + job ID
+    API->>W: Queue background task
+    W->>W: Allocate VMID and IPv4
+    W->>T: terraform plan
+    T->>P: Read desired/current state
+    W->>T: terraform apply saved plan
+    T->>P: Clone and configure VM
+    P->>V: Boot cloud template
+    V->>V: Cloud-init bootstrap
+    W->>V: Wait for TCP/22
+    W->>V: Register ED25519 host key
+    W->>A: Run temporary inventory
+    A->>V: Apply base configuration
+    W->>API: Set job to ready
+    User->>API: GET /api/jobs/{job_id}
+    API-->>User: ready + VMID + IP
+```
+
+## Job State Model
+
+```mermaid
+stateDiagram-v2
+    [*] --> queued
+    queued --> allocating
+    allocating --> planning
+    planning --> applying
+    applying --> waiting_for_ssh
+    waiting_for_ssh --> registering_host_key
+    registering_host_key --> configuring
+    configuring --> ready
+
+    allocating --> failed
+    planning --> failed
+    applying --> failed
+    waiting_for_ssh --> failed
+    registering_host_key --> failed
+    configuring --> failed
+```
+
+Infrastructure existence and service readiness are deliberately different states. Terraform may have created a VM while SSH or configuration management is still incomplete. Only a successful Ansible run moves the job to `ready`.
+
+## Terraform
+
+Terraform is responsible for infrastructure provisioning through the Proxmox API. The `bpg/proxmox` provider clones an approved Ubuntu template and configures:
+
+- stable resource identity through `for_each`;
+- VMID and VM name;
+- vCPU and memory;
+- SCSI disk and storage placement;
+- LAB network bridge;
+- Cloud-init data;
+- QEMU Guest Agent channel;
+- VM power state.
+
+Terraform merges manually declared `vms` with API-managed `portal_vms`. The latter is held in an ignored runtime file so the service can update desired state without committing environment-specific allocations.
+
+Terraform state and execution are located on the control plane. A worker lock serializes operations against the shared state. The provider does not wait for a guest-agent address during initial provisioning because the guest package may not be active until Ansible runs.
+
+## FastAPI
+
+FastAPI provides the initial platform interface:
+
+- `GET /api/health`
+- `POST /api/vms`
+- `GET /api/jobs`
+- `GET /api/jobs/{job_id}`
+
+Pydantic validates names and resource ranges before a request becomes a job. The current API is intentionally small and has no authentication yet, so it must remain within a trusted lab network.
+
+## Cloud-init
+
+Cloud-init performs only the bootstrap needed for remote management:
+
+- initial hostname and user;
+- static IP address and gateway;
+- DNS server and search domain;
+- operator, platform, and Ansible public keys.
+
+Longer-running package operations are handled by Ansible. This reduces reliance on Cloud-init and makes configuration retryable and idempotent.
+
+## SSH Trust Flow
 
 ```mermaid
 flowchart TD
-    User[User] --> Portal[Self-Service Web Portal]
-    Portal --> API[FastAPI]
-    API --> Terraform[Terraform]
-    Terraform --> Proxmox[Proxmox VE 9]
-    Proxmox --> Template[Ubuntu Cloud Template]
-    Template --> VM[Virtual Machine]
-    VM --> CloudInit[Cloud-init]
-    CloudInit --> Ansible[Ansible]
-    Ansible --> Observability[Zabbix / Wazuh]
+    VM[VM starts] --> Port[Worker waits for TCP port 22]
+    Port --> Scan[Scan ED25519 host key]
+    Scan --> Known[Platform-specific known_hosts]
+    Known --> Strict[StrictHostKeyChecking=yes]
+    Strict --> Playbook[Ansible connection]
 ```
 
-## Provisioning Flow
+The automation uses dedicated Ed25519 keys. Private keys stay on the control plane and only public keys are passed through Cloud-init. Host-key checking is not disabled. A separate platform `known_hosts` file prevents automation from modifying a personal SSH trust store.
 
-1. A user submits a virtual machine request through the self-service web portal.
-2. The FastAPI backend validates the request against the platform's policies and resource limits.
-3. FastAPI initiates the Terraform workflow with the approved parameters.
-4. Terraform communicates with the Proxmox API and clones the Ubuntu cloud template.
-5. Proxmox creates the requested virtual machine and applies its infrastructure settings.
-6. Cloud-init performs the virtual machine's first-boot configuration.
-7. Ansible applies the operating-system baseline and installs the required operational agents.
-8. Zabbix and Wazuh provide monitoring and security visibility.
+The current `ssh-keyscan` registration should be strengthened for production by obtaining or validating the expected fingerprint through a trusted channel.
 
-## Provisioning Process
+## Ansible
 
-Provisioning is divided into distinct layers so that infrastructure creation, first-boot initialization, and ongoing operating-system configuration remain independently maintainable. Terraform owns the infrastructure lifecycle. Cloud-init supplies the minimum configuration required to make a new instance reachable and identifiable. Ansible then applies the repeatable system baseline and integrations.
+After SSH becomes reachable, the worker creates a temporary inventory for the requested VM and runs `ansible/playbooks/base.yml`. The playbook refreshes APT with retries, installs the base utility set and `qemu-guest-agent`, enables the agent, and configures the timezone.
 
-The portal and API will eventually expose this workflow without requiring users to access Proxmox directly. Validation, authorization, auditability, and failure reporting will be handled before the platform is considered production-ready.
+The temporary inventory is deleted after execution. A second playbook run completed with `changed=0` and `failed=0`, validating idempotence for the current baseline.
 
-## Terraform Responsibilities
+## Network and Resource Allocation
 
-Terraform will be responsible for infrastructure provisioning through the Proxmox API. Its scope will include cloning the approved Ubuntu cloud template and defining the virtual machine's compute, memory, disk, and network resources. Terraform will remain the authoritative layer for infrastructure lifecycle operations and must not contain embedded credentials or environment-specific secrets in version control.
+The platform is currently restricted to the LAB network. Portal allocations use VMIDs beginning at `9400` and addresses from the configured host range `.110` through `.199`. The allocator checks the portal desired-state map before selecting the first free values.
 
-## Cloud-init Responsibilities
+Current API limits are broader than the original manual Terraform catalog:
 
-Cloud-init will perform the initial guest configuration needed during first boot:
-
-- Set the hostname.
-- Create and configure the initial user.
-- Install the authorized SSH public key.
-- Configure the IP address.
-- Configure DNS settings.
-- Configure the timezone.
-
-Cloud-init should remain focused on bootstrap tasks. Longer-running or reusable operating-system configuration belongs in Ansible.
-
-## Ansible Responsibilities
-
-Ansible will apply and maintain the operating-system baseline after the virtual machine becomes reachable. Its planned responsibilities are:
-
-- Apply operating-system updates.
-- Install required packages.
-- Install and configure Docker.
-- Install and enable the QEMU Guest Agent.
-- Apply SSH hardening.
-- Install and configure the Zabbix Agent.
-- Install and configure the Wazuh Agent.
-
-Playbooks should be idempotent so they can be run repeatedly without introducing unintended changes.
-
-## Security Model
-
-Automation must not use the Proxmox `root@pam` account. A dedicated automation user and an API token will be introduced in a later phase, with permissions limited according to the principle of least privilege.
-
-Secrets and sensitive operational data must never be committed to the repository. This includes:
-
-- API tokens and passwords.
-- SSH private keys.
-- Terraform state files (`.tfstate` and related state artifacts).
-- Terraform variable files (`.tfvars` and `.tfvars.json`).
-- Environment files (`.env` and related variants).
-
-Public SSH keys and sanitized examples may be documented later, but all examples must use non-production placeholder values. Authorization, request validation, audit logging, and separation of duties will be expanded in later milestones.
-
-## Initial Resource Limits
-
-The first implementation will be restricted to the LAB network and will enforce the following planned request boundaries:
-
-| Resource | Allowed values |
+| Resource | Portal request limit |
 | --- | --- |
-| CPU | 1–4 vCPU |
-| RAM | 2 GB, 4 GB, or 8 GB |
-| Disk | 20–100 GB |
+| CPU | 1-8 vCPU |
+| RAM | 1,024-16,384 MB |
+| Disk | 20-200 GB |
 | Network | LAB only |
 
-These limits are initial guardrails and may be revised after capacity, performance, and governance requirements are validated.
+Future versions should use authoritative Proxmox and IPAM checks, transactional reservations, quotas, and approval policies.
 
-## Initial Milestone
+## Credential Flow
 
-The first milestone intentionally focuses only on proving the infrastructure provisioning path:
+```mermaid
+flowchart LR
+    Env[Environment file outside Git] --> Worker
+    Worker -->|process environment| TF[Terraform provider]
+    TF -->|dedicated API token| PVE[Proxmox API]
 
-```text
-Terraform
-    ↓
-Proxmox API
-    ↓
-Clone Ubuntu Template
-    ↓
-Virtual Machine Created
+    Pub[Public SSH keys] --> CI[Cloud-init]
+    CI --> VM[VM authorized_keys]
+    Private[Private automation key on control plane] --> SSH[SSH / Ansible]
+    SSH --> VM
 ```
 
-The web portal, FastAPI orchestration, Cloud-init customization, Ansible configuration, monitoring, and security-agent integrations will follow after this foundational workflow has been validated.
+Credentials are never embedded in Terraform source. The worker loads provider settings from a control-plane environment file outside the repository. Terraform state, real tfvars, plan artifacts, `.env` files, private keys, and generated inventories are excluded by `.gitignore`.
+
+## Security Boundaries
+
+- Proxmox automation must use a dedicated identity and least-privilege API token, never `root@pam`.
+- The API is currently trusted-network only because authentication and RBAC are not implemented.
+- Private SSH keys and Proxmox credentials remain on `SELF-SERVICE-SRV`.
+- SSH host-key checking remains enabled.
+- Terraform operations are serialized to protect shared state.
+- Request limits are validated at the API and Terraform layers.
+- Sensitive runtime artifacts are local and unversioned.
+
+## Failure Handling
+
+If `terraform plan` fails before apply begins, the worker restores the previous portal desired-state file. After apply starts, the worker does not automatically destroy or roll back infrastructure because the actual remote state may have changed. The failed job retains an error summary for troubleshooting.
+
+This behavior favors preservation over destructive recovery. A future reconciler should inspect Terraform and Proxmox state before deciding whether to resume, import, quarantine, or remove a partial resource.
+
+## Current Scope and Future Evolution
+
+The current milestone proves an end-to-end path from API request to configured VM. Planned platform capabilities include persistent jobs, an external task queue, distributed locking, API authentication, RBAC, approvals, quotas, expiration, lifecycle operations, observability, security agents, CI/CD, and a web portal.
