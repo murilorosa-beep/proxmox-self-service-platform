@@ -78,3 +78,32 @@ variable "ansible_ssh_public_key" {
   type        = string
   default     = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINsyhtYAH6vKtvBTD0DFUCmcXhvTRUBoCFIWWi/l/IWg ansible-proxmox-lab"
 }
+
+variable "portal_vms" {
+  description = "Virtual machines created through the self-service portal."
+
+  type = map(object({
+    vm_id        = number
+    cpu_cores    = number
+    memory_mb    = number
+    disk_size_gb = number
+    ipv4_address = string
+  }))
+
+  default = {}
+
+  validation {
+    condition     = alltrue([for vm in values(var.portal_vms) : vm.cpu_cores >= 1 && vm.cpu_cores <= 8])
+    error_message = "CPU must be between 1 and 8 cores."
+  }
+
+  validation {
+    condition     = alltrue([for vm in values(var.portal_vms) : vm.memory_mb >= 1024 && vm.memory_mb <= 16384])
+    error_message = "Memory must be between 1024 and 16384 MB."
+  }
+
+  validation {
+    condition     = alltrue([for vm in values(var.portal_vms) : vm.disk_size_gb >= 20 && vm.disk_size_gb <= 200])
+    error_message = "Disk size must be between 20 and 200 GB."
+  }
+}

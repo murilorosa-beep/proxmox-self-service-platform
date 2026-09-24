@@ -3,8 +3,12 @@ moved {
   to   = proxmox_virtual_environment_vm.vm["tf-dev-01"]
 }
 
+locals {
+  all_vms = merge(var.vms, var.portal_vms)
+}
+
 resource "proxmox_virtual_environment_vm" "vm" {
-  for_each = var.vms
+  for_each = local.all_vms
 
   name        = each.key
   description = "Managed by Terraform - Proxmox Self-Service Platform"
