@@ -6,7 +6,7 @@ Before committing an image, verify that it does not expose API tokens, passwords
 
 ## Recommended Captures
 
-- [ ] `01-proxmox-vms.png`
+- [x] `01-proxmox-vms.png`
   - Proxmox VM list showing `portal-dev-01` and `portal-dev-02`.
   - Include useful columns such as VMID, name, status, CPU, and memory.
   - Crop out unrelated hosts, storage names, users, and other company VMs.
@@ -16,15 +16,15 @@ Before committing an image, verify that it does not expose API tokens, passwords
   - Keep the job state, VM name, VMID, and lab IP visible.
   - Ensure command history does not show credentials or environment variables.
 
-- [ ] `03-terraform-state.png`
+- [x] `03-terraform-state.png`
   - `terraform state list` showing the managed VM resource addresses.
   - Do not show the contents of `terraform.tfstate`.
 
-- [ ] `04-terraform-plan.png`
+- [x] `04-terraform-plan.png`
   - A clean plan ending with `No changes. Your infrastructure matches the configuration.`
   - Avoid commands that print provider environment variables.
 
-- [ ] `05-ansible-playbook.png`
+- [x] `05-ansible-playbook.png`
   - First successful base-playbook run with task names and recap.
   - Crop usernames, filesystem paths, and inventory details if they reveal sensitive infrastructure.
 
@@ -35,8 +35,9 @@ Before committing an image, verify that it does not expose API tokens, passwords
 - [ ] `07-qemu-agent.png`
   - Proxmox shell showing `qm agent <vmid> get-host-name` and the expected hostname.
   - Include only the relevant command and response.
+  - Retake or crop the current candidate: its window title exposes an internal management IP and the terminal shows a root session.
 
-- [ ] `08-fastapi-docs.png`
+- [x] `08-fastapi-docs.png`
   - FastAPI Swagger UI at `/docs`, showing the health, VM, and job endpoints.
   - Use a clean browser window and hide bookmarks, account details, and unrelated tabs.
 

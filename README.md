@@ -220,7 +220,35 @@ proxmox-self-service-platform/
 
 ## Screenshots
 
-No screenshots are committed yet. A capture checklist with safe framing guidance is available in [docs/screenshots/README.md](docs/screenshots/README.md). Image references will be added here only after the real screenshots have been reviewed for secrets and placed in the repository.
+### Proxmox virtual machines
+
+The Proxmox inventory shows the self-service control plane alongside manually managed and portal-provisioned VMs.
+
+![Proxmox virtual machines](docs/screenshots/01-proxmox-vms.png)
+
+### Terraform-managed infrastructure
+
+Terraform tracks both portal and manually managed VMs through stable `for_each` resource addresses.
+
+![Terraform state list](docs/screenshots/03-terraform-state.png)
+
+The control plane converges without infrastructure drift:
+
+![Terraform plan with no changes](docs/screenshots/04-terraform-plan.png)
+
+### Ansible configuration
+
+The base playbook configures packages, QEMU Guest Agent, and timezone after Terraform finishes provisioning.
+
+![Successful Ansible playbook](docs/screenshots/05-ansible-playbook.png)
+
+### FastAPI interface
+
+FastAPI exposes health, VM creation, and provisioning-job endpoints through an OpenAPI interface.
+
+![FastAPI Swagger documentation](docs/screenshots/08-fastapi-docs.png)
+
+Additional evidence planned for the project is tracked in the [screenshot checklist](docs/screenshots/README.md).
 
 ## Current Status
 
