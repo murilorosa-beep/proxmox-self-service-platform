@@ -1,18 +1,24 @@
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from fastapi import FastAPI, HTTPException, status
+from fastapi import BackgroundTasks, FastAPI, HTTPException, status
 from pydantic import BaseModel, Field
+
+from provisioner import provision_vm
 
 
 app = FastAPI(
     title="Proxmox Self-Service Platform",
-    version="0.3.0"
+    version="0.4.0"
 )
 
 
 class VMCreateRequest(BaseModel):
-    name: str = Field(min_length=3, max_length=40)
+    name: str = Field(
+        min_length=3,
+        max_length=40,
+        pattern=r"^[a-zA-Z0-9][a-zA-Z0-9-]*$"
+    )
     cpu: int = Field(ge=1, le=8)
     memory_mb: int = Field(ge=1024, le=16384)
     disk_gb: int = Field(ge=20, le=200)
@@ -30,7 +36,20 @@ def health():
 
 
 @app.post("/api/vms", status_code=status.HTTP_202_ACCEPTED)
-def create_vm(vm: VMCreateRequest):
+def create_vm(
+    vm: VMCreateRequest,
+    background_tasks: BackgroundTasks
+):
+    for existing_job in jobs.values():
+        if (
+            existing_job["vm"]["name"] == vm.name
+            and existing_job["status"] not in {"failed"}
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail="A job already exists for this VM name"
+            )
+
     job_id = str(uuid4())
 
     job = {
@@ -42,6 +61,12 @@ def create_vm(vm: VMCreateRequest):
     }
 
     jobs[job_id] = job
+
+    background_tasks.add_task(
+        provision_vm,
+        job_id,
+        jobs
+    )
 
     return job
 
