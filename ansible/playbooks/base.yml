@@ -1,0 +1,36 @@
+---
+- name: Configure self-service VM
+  hosts: portal_vms
+  become: true
+
+  tasks:
+    - name: Update apt cache
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+      register: apt_update
+      retries: 5
+      delay: 10
+      until: apt_update is succeeded
+
+    - name: Install base packages
+      ansible.builtin.apt:
+        name:
+          - qemu-guest-agent
+          - curl
+          - git
+          - vim
+          - unzip
+          - htop
+          - ca-certificates
+        state: present
+
+    - name: Enable QEMU Guest Agent
+      ansible.builtin.systemd:
+        name: qemu-guest-agent
+        enabled: true
+        state: started
+
+    - name: Set timezone
+      community.general.timezone:
+        name: America/Sao_Paulo

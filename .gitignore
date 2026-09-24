@@ -51,3 +51,4 @@ ansible/group_vars/*/vault.yml
 # OS
 .DS_Store
 Thumbs.db
+ansible/inventory/portal.ini
