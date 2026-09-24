@@ -1,10 +1,17 @@
+moved {
+  from = proxmox_virtual_environment_vm.vm
+  to   = proxmox_virtual_environment_vm.vm["tf-dev-01"]
+}
+
 resource "proxmox_virtual_environment_vm" "vm" {
-  name        = var.vm_name
+  for_each = var.vms
+
+  name        = each.key
   description = "Managed by Terraform - Proxmox Self-Service Platform"
   tags        = ["lab", "terraform", "self-service"]
 
   node_name = var.node_name
-  vm_id     = var.vm_id
+  vm_id     = each.value.vm_id
 
   started = true
 
@@ -16,12 +23,12 @@ resource "proxmox_virtual_environment_vm" "vm" {
   }
 
   cpu {
-    cores = var.cpu_cores
+    cores = each.value.cpu_cores
     type  = "x86-64-v2-AES"
   }
 
   memory {
-    dedicated = var.memory_mb
+    dedicated = each.value.memory_mb
   }
 
   scsi_hardware = "virtio-scsi-single"
@@ -29,7 +36,7 @@ resource "proxmox_virtual_environment_vm" "vm" {
   disk {
     datastore_id = "local-lvm"
     interface    = "scsi0"
-    size         = var.disk_size_gb
+    size         = each.value.disk_size_gb
     discard      = "on"
     ssd          = true
   }
@@ -49,7 +56,7 @@ resource "proxmox_virtual_environment_vm" "vm" {
 
     ip_config {
       ipv4 {
-        address = var.ipv4_address
+        address = each.value.ipv4_address
         gateway = var.ipv4_gateway
       }
     }
@@ -57,13 +64,18 @@ resource "proxmox_virtual_environment_vm" "vm" {
     user_account {
       username = var.cloud_init_user
       keys = [
-        trimspace(file(pathexpand(var.ssh_public_key_path)))
+        trimspace(file(pathexpand(var.ssh_public_key_path))),
+        trimspace(var.ansible_ssh_public_key)
       ]
     }
   }
 
   agent {
-    enabled = false
+    enabled = true
+
+    wait_for_ip {
+      disabled = true
+    }
   }
 
   operating_system {

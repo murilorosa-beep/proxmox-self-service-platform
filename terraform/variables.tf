@@ -10,48 +10,30 @@ variable "template_vm_id" {
   default     = 9000
 }
 
-variable "vm_id" {
-  description = "VMID for the new virtual machine."
-  type        = number
-  default     = 9200
-}
+variable "vms" {
+  description = "Virtual machines managed by the platform."
 
-variable "vm_name" {
-  description = "Name of the virtual machine."
-  type        = string
-  default     = "tf-dev-01"
-}
-
-variable "cpu_cores" {
-  description = "Number of virtual CPU cores."
-  type        = number
-  default     = 2
+  type = map(object({
+    vm_id        = number
+    cpu_cores    = number
+    memory_mb    = number
+    disk_size_gb = number
+    ipv4_address = string
+  }))
 
   validation {
-    condition     = var.cpu_cores >= 1 && var.cpu_cores <= 4
-    error_message = "CPU must be between 1 and 4 cores."
+    condition     = alltrue([for vm in values(var.vms) : vm.cpu_cores >= 1 && vm.cpu_cores <= 4])
+    error_message = "CPU must be between 1 and 4 cores for every VM."
   }
-}
-
-variable "memory_mb" {
-  description = "Dedicated memory in MB."
-  type        = number
-  default     = 4096
 
   validation {
-    condition     = contains([2048, 4096, 8192], var.memory_mb)
-    error_message = "Memory must be 2048, 4096 or 8192 MB."
+    condition     = alltrue([for vm in values(var.vms) : contains([2048, 4096, 8192], vm.memory_mb)])
+    error_message = "Memory must be 2048, 4096 or 8192 MB for every VM."
   }
-}
-
-variable "disk_size_gb" {
-  description = "Primary disk size in GB."
-  type        = number
-  default     = 40
 
   validation {
-    condition     = var.disk_size_gb >= 20 && var.disk_size_gb <= 100
-    error_message = "Disk size must be between 20 and 100 GB."
+    condition     = alltrue([for vm in values(var.vms) : vm.disk_size_gb >= 20 && vm.disk_size_gb <= 100])
+    error_message = "Disk size must be between 20 and 100 GB for every VM."
   }
 }
 
@@ -59,12 +41,6 @@ variable "bridge" {
   description = "Proxmox network bridge."
   type        = string
   default     = "vmbr1"
-}
-
-variable "ipv4_address" {
-  description = "Static IPv4 address in CIDR notation."
-  type        = string
-  default     = "172.16.16.101/24"
 }
 
 variable "ipv4_gateway" {
@@ -95,4 +71,10 @@ variable "ssh_public_key_path" {
   description = "Path to SSH public key used by Cloud-init."
   type        = string
   default     = "~/.ssh/proxmox-self-service.pub"
+}
+
+variable "ansible_ssh_public_key" {
+  description = "Public SSH key used by the Ansible controller."
+  type        = string
+  default     = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINsyhtYAH6vKtvBTD0DFUCmcXhvTRUBoCFIWWi/l/IWg ansible-proxmox-lab"
 }

@@ -1,4 +1,10 @@
-# Terraform
+# Terraform secrets/state
+terraform/local-env.ps1
+terraform/terraform.tfvars
+terraform/*.tfstate
+terraform/*.tfstate.*
+terraform/tfplan
+terraform/*.tfplan
 **/.terraform/*
 *.tfstate
 *.tfstate.*
@@ -21,6 +27,7 @@ secrets/
 credentials/
 
 # Python
+backend/.venv/
 __pycache__/
 *.py[cod]
 .venv/
@@ -34,6 +41,7 @@ build/
 # Ansible
 *.retry
 ansible/inventory.ini
+ansible/inventory/generated.ini
 ansible/group_vars/*/vault.yml
 
 # IDE

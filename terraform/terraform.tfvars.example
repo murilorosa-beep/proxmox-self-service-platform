@@ -1,9 +1,11 @@
-vm_id   = 9200
-vm_name = "tf-dev-01"
+vms = {
+  tf-dev-01 = {
+    vm_id        = 9200
+    cpu_cores    = 2
+    memory_mb    = 4096
+    disk_size_gb = 40
+    ipv4_address = "172.16.16.101/24"
+  }
+}
 
-cpu_cores    = 2
-memory_mb    = 4096
-disk_size_gb = 40
-
-ipv4_address = "172.16.16.101/24"
 ipv4_gateway = "172.16.16.16"
