@@ -32,10 +32,9 @@ Before committing an image, verify that it does not expose API tokens, passwords
   - Second playbook run showing `changed=0`, `unreachable=0`, and `failed=0`.
   - This is one of the strongest portfolio screenshots because it demonstrates convergence.
 
-- [ ] `07-qemu-agent.png`
+- [x] `07-qemu-agent.png`
   - Proxmox shell showing `qm agent <vmid> get-host-name` and the expected hostname.
   - Include only the relevant command and response.
-  - Retake or crop the current candidate: its window title exposes an internal management IP and the terminal shows a root session.
 
 - [x] `08-fastapi-docs.png`
   - FastAPI Swagger UI at `/docs`, showing the health, VM, and job endpoints.

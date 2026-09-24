@@ -248,6 +248,12 @@ FastAPI exposes health, VM creation, and provisioning-job endpoints through an O
 
 ![FastAPI Swagger documentation](docs/screenshots/08-fastapi-docs.png)
 
+### QEMU Guest Agent validation
+
+Proxmox successfully communicates with the agent installed inside a portal-provisioned VM and retrieves its hostname.
+
+![QEMU Guest Agent hostname validation](docs/screenshots/07-qemu-agent.png)
+
 Additional evidence planned for the project is tracked in the [screenshot checklist](docs/screenshots/README.md).
 
 ## Current Status
